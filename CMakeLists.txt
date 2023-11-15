@@ -38,6 +38,8 @@ endif()
 
 add_subdirectory(external)
 add_subdirectory(vendor/glad)
+add_custom_target(copy_models ALL COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/data/models ${CMAKE_CURRENT_BINARY_DIR}/models)
+add_dependencies(myProject copy_models)
 
 target_include_directories(myProject
 	PUBLIC
