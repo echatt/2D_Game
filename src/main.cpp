@@ -5,15 +5,45 @@
 #include <imgui_impl_glfw.h>
 #include <glm/glm.hpp>
 #include<glm/gtc/matrix_transform.hpp>
+#include<glm/gtc/type_ptr.hpp>
 #include <cstdio>
 #include <exception>
 #include <iostream>
 #include <sstream>
-
+#include <vector>
 #include "imgui_impl_opengl3.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+
+enum class game_object
+{
+    PLAYER,
+    TERRAIN,
+    SLIME
+};
+
+struct entity
+{
+    game_object type;
+    glm::vec2 scale;
+    glm::vec2 position;
+};
+
+entity create_player_entity(float x, float y)
+{
+    entity PLAYER;
+    PLAYER.type = game_object::PLAYER;
+    PLAYER.scale = { 128, 128 };
+    PLAYER.position = { x, y };
+    return PLAYER;
+}
+
+entity create_slime_entity(float x, float y)
+{
+    return{ game_object::SLIME, {64, 64}, {x , y} };
+}
 
 namespace
 {
@@ -93,35 +123,67 @@ unsigned int indices[] = {  // note that we start from 0!
     1, 2, 3,    // second triangle
 };
 
+const char* vertexShaderSource = R"(#version 330 core
+layout (location = 0) in vec2 aPos;
+layout (location = 1) in vec3 aColor;
+layout (location = 2) in vec2 aTexCoord;
+
+out vec3 ourColor;
+out vec2 TexCoord;
+uniform mat4 projection;
+uniform vec2 scale;
+uniform vec2 position;
+
+void main()
+{
+   gl_Position = projection * vec4(aPos * scale + position, 0.0, 1.0);
+   ourColor = aColor;
+   TexCoord = aTexCoord;
+}
+)";
+
+const char* fragmentShaderSource = R"(#version 330 core
+out vec4 FragColor;
+
+in vec3 ourColor;
+in vec2 TexCoord;
+
+uniform sampler2D ourTexture;
+
+void main()
+{
+   FragColor = texture(ourTexture, TexCoord);
+}
+)";
+
+GLuint load_texture(const char* path) {
+    // Load Texture
+    unsigned int texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    // set the texture wrapping/filtering options (on the currently bound texture object)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    // load and generate the texture
+    int width, height, nrChannels;
+    //stbi_set_flip_vertically_on_load(true);
+    unsigned char* data = stbi_load(path, &width, &height, &nrChannels, 4);
+    if (data)
+    {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    else
+    {
+        std::cout << "Failed to load texture" << std::endl;
+    }
+    stbi_image_free(data);
+    return(texture);
+}
 
 
-const char* vertexShaderSource = "#version 330 core\n"
-"layout (location = 0) in vec3 aPos;\n"
-"layout (location = 1) in vec3 aColor;\n"
-"layout (location = 2) in vec2 aTexCoord;\n"
-
-"out vec3 ourColor;\n"
-"out vec2 TexCoord;\n"
-
-"void main()\n"
-"{\n"
-"   gl_Position = vec4(aPos, 1.0);\n"
-"   ourColor = aColor;\n"
-"   TexCoord = aTexCoord;\n"
-"}\0";
-
-const char* fragmentShaderSource = "#version 330 core\n"
-"out vec4 FragColor;\n"
-
-"in vec3 ourColor;\n"
-"in vec2 TexCoord;\n"
-
-"uniform sampler2D ourTexture;\n"
-
-"void main()\n"
-"{\n"
-"   FragColor = texture(ourTexture, TexCoord);\n"
-"}\0";
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] const char* const* argv)
 {
@@ -144,7 +206,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] const char* const* argv)
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
   glfwWindowHint(GLFW_MAXIMIZED, GL_TRUE);
 
-  // Create a monitor that is 0.75x0.75 the size 
+  // Create a monitor that is fullscreen
   GLFWmonitor* monitor = glfwGetPrimaryMonitor();
   if (monitor == nullptr)
   {
@@ -170,7 +232,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] const char* const* argv)
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1); // 1 = vsync, 0 = no vsync
 
-  glm::mat4 projection = glm::ortho(0.0f, static_cast<float>(videoMode->width), static_cast<float>(videoMode->height), 0.0f, -1.0f, 1.0f);
+  glm::mat4 projection = glm::ortho(0.0f, static_cast<float>(windowWidth), static_cast<float>(windowHeight), 0.0f, -1.0f, 1.0f);
 
   // Load OpenGL function pointers
   int version = gladLoadGL(glfwGetProcAddress);
@@ -258,37 +320,21 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] const char* const* argv)
   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
   glEnableVertexAttribArray(2);
 
-  // Load Texture
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  unsigned int texture;
-  glGenTextures(1, &texture);
-  glBindTexture(GL_TEXTURE_2D, texture);
-  // set the texture wrapping/filtering options (on the currently bound texture object)
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  // load and generate the texture
-  int width, height, nrChannels;
-  stbi_set_flip_vertically_on_load(true);
-  unsigned char* data = stbi_load("models/Sprite-0002.png", &width, &height, &nrChannels, 4);
-  if (data)
-  {
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-      glGenerateMipmap(GL_TEXTURE_2D);
-  }
-  else
-  {
-      std::cout << "Failed to load texture" << std::endl;
-  }
-  stbi_image_free(data);
+  GLuint player_texture = load_texture("models/Sprite-0002.png");
 
+  std::vector<entity> entities;
+  entities.push_back(create_player_entity(static_cast<float>(windowWidth) / 2, static_cast<float>(windowHeight) / 2));
   //Game loop
   while(!glfwWindowShouldClose(window))
   {
     // Profile the main loop
     ZoneTransient(mainLoop, true);
+
+    // Clear the window
+    glClearColor(1.0f, 0.0f, 0.5f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
 
     // Call these each frame for ImGui to work
     ImGui_ImplOpenGL3_NewFrame();
@@ -301,29 +347,38 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] const char* const* argv)
       glfwSetWindowShouldClose(window, true);
     }
 
-    // Clear the window
-    glClearColor(1.0f, 0.0f, 0.5f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+
 
     // Create a window with ImGui and put some text in it
     ImGui::Begin("Test window");
     ImGui::Text("bababooey");
+    ImGui::SliderFloat2("position", glm::value_ptr(entities[0].position), 0, static_cast<float>(windowWidth));
+    ImGui::SliderFloat2("scale", glm::value_ptr(entities[0].scale), 0, 1000);
     ImGui::End();
 
     // Draw ImGui to the screen
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
+  
     // ..:: Drawing code (in render loop) :: ..
     // 4. draw the object
-    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(shaderProgram);
-    glBindTexture(GL_TEXTURE_2D, texture);
+    int projectionLoc = glGetUniformLocation(shaderProgram, "projection");
+    glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
     glBindVertexArray(VAO);
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    for (const auto& entity : entities)
+    {
+        if (entity.type == game_object::PLAYER)
+        {
+            glBindTexture(GL_TEXTURE_2D, player_texture);
+        }
+        int scaleLoc = glGetUniformLocation(shaderProgram, "scale");
+        glUniform2fv(scaleLoc, 1, glm::value_ptr(entity.scale));
+        int positionLoc = glGetUniformLocation(shaderProgram, "position");
+        glUniform2fv(positionLoc, 1, glm::value_ptr(entity.position));
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    }
     glBindVertexArray(0);
-
     glfwSwapBuffers(window);
   }
 
